@@ -77,6 +77,10 @@ def init_db() -> None:
               user_id text not null,
               created_at integer not null
             );
+            create table if not exists entry_passes (
+              user_id text primary key,
+              created_at integer not null
+            );
             create table if not exists access_requests (
               id integer primary key autoincrement,
               user_id text not null,
@@ -136,6 +140,25 @@ def create_session(user_id: str) -> str:
             (token, user_id, now_ts()),
         )
     return token
+
+
+def mark_entry_pass(user_id: str) -> None:
+    with db() as conn:
+        conn.execute(
+            """
+            insert into entry_passes (user_id, created_at) values (?, ?)
+            on conflict(user_id) do update set created_at = excluded.created_at
+            """,
+            (user_id, now_ts()),
+        )
+
+
+def has_recent_entry_pass(user_id: str, ttl_seconds: int = 600) -> bool:
+    with db() as conn:
+        row = conn.execute("select created_at from entry_passes where user_id = ?", (user_id,)).fetchone()
+    if not row:
+        return False
+    return now_ts() - int(row["created_at"]) <= ttl_seconds
 
 
 def user_from_session(headers: Any) -> AccessUser | None:

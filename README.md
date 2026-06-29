@@ -31,7 +31,7 @@ docs/feishu_deploy.md
 云端部署后，机器人菜单里填写：
 
 ```text
-https://你的云端域名/feishu/start
+https://你的云端域名/feishu/entry
 ```
 
 不要填写本地地址 `http://127.0.0.1:8765`。

@@ -23,8 +23,10 @@ from feishu_support import (
     exchange_code_for_user,
     get_user_name,
     get_user_status,
+    has_recent_entry_pass,
     init_db,
     is_approved,
+    mark_entry_pass,
     notify_admin,
     pending_requests,
     record_export,
@@ -211,6 +213,35 @@ INDEX_HTML = """<!doctype html>
       color: var(--muted);
       font-size: 14px;
     }
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      display: none;
+      place-items: center;
+      background: rgba(0, 0, 0, .62);
+      padding: 20px;
+      z-index: 10;
+    }
+    .modal {
+      width: min(420px, 100%);
+      border: 1px solid var(--line-soft);
+      border-radius: 8px;
+      background: #1c1812;
+      padding: 24px;
+      box-shadow: 0 22px 70px rgba(0, 0, 0, .42);
+    }
+    .modal h2 {
+      margin: 0 0 10px;
+      font-size: 22px;
+    }
+    .modal p {
+      margin: 0 0 20px;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+    .modal button {
+      width: 100%;
+    }
     @media (max-width: 860px) {
       .app { grid-template-columns: 1fr; }
       aside { border-right: 0; border-bottom: 1px solid var(--line-soft); }
@@ -245,7 +276,7 @@ INDEX_HTML = """<!doctype html>
         <label for="bio">底部介绍</label>
         <textarea id="bio" name="bio">实战派辅导老师，14年汽车行业经验，6年新媒体经验，擅长新媒体全链路SOP集训/入店辅导，能快速切入门店痛点，用大白话讲专业方法，帮助学员拿到更有效的本地线索和成交闭环。</textarea>
 
-        <label for="portrait">人像</label>
+        <label for="portrait">人像（无背景png人像）</label>
         <input id="portrait" name="portrait" type="file" accept="image/png,image/jpeg,image/webp">
 
         <label for="output_filename">文件名</label>
@@ -289,6 +320,13 @@ INDEX_HTML = """<!doctype html>
       </div>
     </main>
   </div>
+  <div id="successModal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="successTitle">
+    <div class="modal">
+      <h2 id="successTitle">导出成功</h2>
+      <p>海报已生成，使用记录已推送给管理员。</p>
+      <button id="successCloseBtn" type="button">给设计师＋鸡腿</button>
+    </div>
+  </div>
   <script>
     const form = document.getElementById('posterForm');
     const preview = document.getElementById('preview');
@@ -298,11 +336,21 @@ INDEX_HTML = """<!doctype html>
     const batchForm = document.getElementById('batchForm');
     const batchStatusEl = document.getElementById('batchStatus');
     const batchDownloadBtn = document.getElementById('batchDownloadBtn');
+    const successModal = document.getElementById('successModal');
+    const successCloseBtn = document.getElementById('successCloseBtn');
     let timer = null;
     let controller = null;
 
     function setStatus(text) {
       statusEl.textContent = text;
+    }
+
+    function showSuccessModal() {
+      successModal.style.display = 'grid';
+    }
+
+    function hideSuccessModal() {
+      successModal.style.display = 'none';
     }
 
     async function generate(intent = 'preview') {
@@ -326,6 +374,7 @@ INDEX_HTML = """<!doctype html>
         downloadBtn.setAttribute('download', payload.filename);
         downloadBtn.style.display = 'inline-block';
         setStatus(intent === 'export' ? '已导出，已通知管理员' : '已生成预览');
+        if (intent === 'export') showSuccessModal();
       } catch (err) {
         if (err.name === 'AbortError') return;
         setStatus(err.message);
@@ -340,6 +389,11 @@ INDEX_HTML = """<!doctype html>
     form.addEventListener('submit', (event) => {
       event.preventDefault();
       generate('export');
+    });
+
+    successCloseBtn.addEventListener('click', hideSuccessModal);
+    successModal.addEventListener('click', (event) => {
+      if (event.target === successModal) hideSuccessModal();
     });
 
     batchForm.addEventListener('submit', async (event) => {
@@ -389,9 +443,19 @@ class PosterRequestHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
+        if parsed.path == "/feishu/entry":
+            user = self.current_user(parsed)
+            if user is None:
+                return
+            mark_entry_pass(user.user_id)
+            self.send_redirect("/feishu/start")
+            return
         if parsed.path in {"/", "/feishu/start"}:
             user = self.current_user(parsed)
             if user is None:
+                return
+            if require_feishu_login() and not has_recent_entry_pass(user.user_id):
+                self.send_entry_required_page()
                 return
             if not is_approved(user):
                 self.send_access_page(user)
@@ -539,6 +603,14 @@ class PosterRequestHandler(BaseHTTPRequestHandler):
         </form>
         """
         self.send_bytes(self.basic_page("四星讲师海报工具", body).encode("utf-8"), "text/html; charset=utf-8")
+
+    def send_entry_required_page(self) -> None:
+        body = f"""
+        <p>为了保护工具使用权限，请从飞书机器人菜单进入。</p>
+        <p class="muted">如果你刚刚从飞书进入，可以重新点击一次机器人菜单。</p>
+        <a class="button" href="/feishu/entry">重新进入</a>
+        """
+        self.send_bytes(self.basic_page("请从飞书入口打开", body).encode("utf-8"), "text/html; charset=utf-8", 403)
 
     def send_me_page(self, user: AccessUser) -> None:
         body = f"""

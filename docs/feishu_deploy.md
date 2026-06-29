@@ -15,7 +15,7 @@
 机器人菜单的“跳转至指定链接”里填写云端 HTTPS 地址：
 
 ```text
-https://你的云端域名/feishu/start
+https://你的云端域名/feishu/entry
 ```
 
 不要填写：
