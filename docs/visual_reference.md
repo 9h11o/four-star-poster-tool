@@ -1,0 +1,2 @@
+four_star_base.png和four_star_foreground_mask.png不能动
+参考海报为 assets/samples/reference_poster.jpg

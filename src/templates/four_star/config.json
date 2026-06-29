@@ -1,0 +1,92 @@
+{
+  "canvas": {
+    "width": 750,
+    "height": 1436
+  },
+  "assets": {
+    "base": "../../assets/template/our_star_base.jpg",
+    "foreground_mask": "../../assets/template/four_star_foreground_mask.png",
+    "font": "../../assets/fonts/抖音美好体.ttf",
+    "footer_font": "../../assets/fonts/footer_brand_font.ttf",
+    "name_texture": "../../assets/textures/ame_gold_texture.png",
+    "bio_box_glow_bar": "../../assets/effects/bio_box_glow_bar.png"
+  },
+  "portrait": {
+    "box": [115, 330, 635, 1109],
+    "anchor": "bottom_center",
+    "fit": "contain_subject",
+    "fill_ratio": 1.08,
+    "alpha_threshold": 18,
+    "title_bottom_y": 382,
+    "head_gap": {
+      "min": 22,
+      "max": 60,
+      "preferred": 22
+    },
+    "layer_mask": {
+      "fade_start_y": 1032,
+      "fade_end_y": 1138
+    }
+  },
+  "project_experience": {
+    "title": {
+      "text": "项目经历",
+      "xy": [65, 772],
+      "font_size": 16,
+      "fill": "#eecf7d",
+      "tracking": 25
+    },
+    "body": {
+      "box": [65, 802, 686, 988],
+      "font_size": 16,
+      "fill": "#ffffff",
+      "tracking": 0,
+      "line_height": 30,
+      "max_lines": null,
+      "bottom_baseline": 976,
+      "shadow": {
+        "fill": "#a3561e",
+        "opacity": 0.5,
+        "offset": [0, 3]
+      }
+    }
+  },
+  "name": {
+    "area": [65, 1015, 370, 1145],
+    "bottom_y": 1148,
+    "font_size": 104,
+    "tracking_by_length": {
+      "2": 960,
+      "3": 15
+    },
+    "default_tracking": 0,
+    "texture_mode": "clip_mask"
+  },
+  "bio": {
+    "width": 666,
+    "padding": [24, 18, 24, 18],
+    "font_size": 16,
+    "fill": "#fffcec",
+    "tracking": 10,
+    "line_height": 28.56,
+    "max_lines": 6,
+    "stroke": "#e8c47b",
+    "stroke_width": 1,
+    "radius": 13,
+    "glow_bar": {
+      "enabled": true,
+      "offset_y": 0
+    }
+  },
+  "footer": {
+    "text": "懂车帝 - 巨懂车",
+    "font_size": 16,
+    "fill": "#ffffff",
+    "tracking": 0,
+    "bottom_y": 1414
+  },
+  "bottom_layout": {
+    "name_group_bottom_y": 1148,
+    "poster_bottom_y": 1436
+  }
+}
