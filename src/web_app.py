@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-import cgi
+from email.parser import BytesParser
+from email.policy import default as email_policy
 import html
 import io
 import json
@@ -34,6 +35,38 @@ from feishu_support import (
 
 WEB_OUTPUT_DIR = PROJECT_ROOT / "outputs" / "web"
 DEFAULT_PORTRAIT = "assets/portraits/李甲_transparent.png"
+
+
+class UploadedField:
+    def __init__(self, value: bytes, filename: str = "") -> None:
+        self.value = value
+        self.filename = filename
+        self.file = io.BytesIO(value)
+
+    @property
+    def text(self) -> str:
+        return self.value.decode("utf-8", errors="replace")
+
+
+class ParsedForm:
+    def __init__(self) -> None:
+        self._items: dict[str, list[UploadedField]] = {}
+
+    def add(self, name: str, field: UploadedField) -> None:
+        self._items.setdefault(name, []).append(field)
+
+    def __contains__(self, key: str) -> bool:
+        return key in self._items
+
+    def __getitem__(self, key: str):
+        values = self._items[key]
+        return values if len(values) > 1 else values[0]
+
+    def getfirst(self, key: str, default: str = "") -> str:
+        values = self._items.get(key)
+        if not values:
+            return default
+        return values[0].text
 
 
 INDEX_HTML = """<!doctype html>
@@ -523,18 +556,28 @@ class PosterRequestHandler(BaseHTTPRequestHandler):
 <body><main><h1>{html.escape(title)}</h1>{body}</main></body>
 </html>"""
 
-    def parse_form(self) -> cgi.FieldStorage:
+    def parse_form(self) -> ParsedForm:
         content_length = int(self.headers.get("Content-Length", "0"))
         body = self.rfile.read(content_length)
-        return cgi.FieldStorage(
-            fp=io.BytesIO(body),
-            headers=self.headers,
-            environ={
-                "REQUEST_METHOD": "POST",
-                "CONTENT_TYPE": self.headers.get("Content-Type", ""),
-                "CONTENT_LENGTH": str(content_length),
-            },
-        )
+        form = ParsedForm()
+        content_type = self.headers.get("Content-Type", "")
+        if not content_type.startswith("multipart/form-data"):
+            return form
+
+        raw_message = (
+            f"Content-Type: {content_type}\r\n"
+            f"Content-Length: {content_length}\r\n"
+            "MIME-Version: 1.0\r\n\r\n"
+        ).encode("utf-8") + body
+        message = BytesParser(policy=email_policy).parsebytes(raw_message)
+        for part in message.iter_parts():
+            name = part.get_param("name", header="content-disposition")
+            if not name:
+                continue
+            filename = part.get_filename() or ""
+            payload = part.get_payload(decode=True) or b""
+            form.add(name, UploadedField(payload, filename))
+        return form
 
     def render_from_form(self, user: AccessUser) -> dict:
         form = self.parse_form()
