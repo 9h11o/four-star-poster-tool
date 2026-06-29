@@ -21,9 +21,11 @@ from feishu_support import (
     create_session,
     dev_user,
     exchange_code_for_user,
+    get_user_name,
     get_user_status,
     init_db,
     is_approved,
+    notify_admin,
     pending_requests,
     record_export,
     require_feishu_login,
@@ -416,6 +418,9 @@ class PosterRequestHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
         try:
+            if parsed.path == "/feishu/card/callback":
+                self.handle_feishu_card_callback()
+                return
             if parsed.path == "/access/request":
                 user = self.current_user(parsed)
                 if user is None:
@@ -441,6 +446,54 @@ class PosterRequestHandler(BaseHTTPRequestHandler):
             self.send_json(payload)
         except Exception as exc:
             self.send_json({"error": str(exc)}, status=400)
+
+    def handle_feishu_card_callback(self) -> None:
+        payload = self.parse_json_body()
+        challenge = payload.get("challenge")
+        if challenge:
+            self.send_json({"challenge": challenge})
+            return
+
+        value = self.find_action_value(payload)
+        action = str(value.get("action", ""))
+        user_id = str(value.get("user_id", ""))
+        if action not in {"approved", "rejected"} or not user_id:
+            self.send_json({"toast": {"type": "warning", "content": "无法识别这次操作"}})
+            return
+
+        set_user_status(user_id, action)
+        user_name = get_user_name(user_id)
+        action_text = "已同意" if action == "approved" else "已拒绝"
+        notify_admin(f"权限审核：{user_name} {action_text}。")
+        self.send_json(
+            {
+                "toast": {
+                    "type": "success",
+                    "content": f"{action_text} {user_name} 的使用申请",
+                }
+            }
+        )
+
+    def parse_json_body(self) -> dict:
+        content_length = int(self.headers.get("Content-Length", "0"))
+        body = self.rfile.read(content_length)
+        if not body:
+            return {}
+        return json.loads(body.decode("utf-8"))
+
+    def find_action_value(self, payload: dict) -> dict:
+        candidates = [
+            payload.get("action", {}),
+            payload.get("event", {}).get("action", {}),
+            payload.get("action", {}).get("value", {}),
+            payload.get("event", {}).get("action", {}).get("value", {}),
+        ]
+        for candidate in candidates:
+            if isinstance(candidate, dict) and "value" in candidate and isinstance(candidate["value"], dict):
+                return candidate["value"]
+            if isinstance(candidate, dict) and "action" in candidate and "user_id" in candidate:
+                return candidate
+        return {}
 
     def current_user(self, parsed) -> AccessUser | None:
         query = parse_qs(parsed.query)

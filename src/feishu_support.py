@@ -202,24 +202,30 @@ def is_approved(user: AccessUser) -> bool:
 def create_access_request(user: AccessUser, note: str = "") -> None:
     ensure_user(user)
     ts = now_ts()
+    request_id = None
     with db() as conn:
         existing = conn.execute(
             "select id from access_requests where user_id = ? and status = 'pending'",
             (user.user_id,),
         ).fetchone()
         if existing:
+            request_id = existing["id"]
             conn.execute(
                 "update access_requests set note = ?, updated_at = ? where id = ?",
                 (note, ts, existing["id"]),
             )
         else:
-            conn.execute(
+            cursor = conn.execute(
                 """
                 insert into access_requests (user_id, note, status, created_at, updated_at)
                 values (?, ?, 'pending', ?, ?)
                 """,
                 (user.user_id, note, ts, ts),
             )
+            request_id = cursor.lastrowid
+    sent = notify_access_request(user, note, request_id)
+    if sent:
+        return
     notify_admin(
         f"权限申请：{user.name} 申请使用四星讲师海报工具。\n"
         f"审核地址：{app_base_url()}/admin/requests?admin_token={quote(admin_token())}"
@@ -234,6 +240,12 @@ def set_user_status(user_id: str, status: str) -> None:
             "update access_requests set status = ?, updated_at = ? where user_id = ? and status = 'pending'",
             (status, ts, user_id),
         )
+
+
+def get_user_name(user_id: str) -> str:
+    with db() as conn:
+        row = conn.execute("select name from users where user_id = ?", (user_id,)).fetchone()
+    return row["name"] if row else user_id
 
 
 def pending_requests() -> list[sqlite3.Row]:
@@ -358,6 +370,86 @@ def send_feishu_message(receive_id: str, text: str) -> bool:
     if not ok:
         print(f"[feishu notify failed] {result}")
     return ok
+
+
+def send_feishu_card(receive_id: str, card: dict) -> bool:
+    if not (feishu_app_id() and feishu_app_secret() and receive_id):
+        print(f"[feishu card skipped] {json.dumps(card, ensure_ascii=False)}")
+        return False
+    token = tenant_access_token()
+    if not token:
+        print(f"[feishu card failed] tenant_access_token missing: {json.dumps(card, ensure_ascii=False)}")
+        return False
+    payload = {
+        "receive_id": receive_id,
+        "msg_type": "interactive",
+        "content": json.dumps(card, ensure_ascii=False),
+    }
+    result = json_post(
+        "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id",
+        payload,
+        {"Authorization": f"Bearer {token}"},
+    )
+    ok = result.get("code") in (0, None)
+    if not ok:
+        print(f"[feishu card failed] {result}")
+    return ok
+
+
+def access_request_card(user: AccessUser, note: str, request_id: int | None) -> dict:
+    note_text = note.strip() or "无申请说明"
+    admin_url = f"{app_base_url()}/admin/requests?admin_token={quote(admin_token())}"
+    return {
+        "config": {"wide_screen_mode": True},
+        "header": {
+            "template": "blue",
+            "title": {"tag": "plain_text", "content": "四星讲师海报工具权限申请"},
+        },
+        "elements": [
+            {
+                "tag": "div",
+                "text": {
+                    "tag": "lark_md",
+                    "content": f"**申请人：**{user.name}\n**open_id：**{user.open_id or user.user_id}\n**说明：**{note_text}",
+                },
+            },
+            {
+                "tag": "action",
+                "actions": [
+                    {
+                        "tag": "button",
+                        "text": {"tag": "plain_text", "content": "同意"},
+                        "type": "primary",
+                        "value": {
+                            "action": "approved",
+                            "user_id": user.user_id,
+                            "request_id": str(request_id or ""),
+                        },
+                    },
+                    {
+                        "tag": "button",
+                        "text": {"tag": "plain_text", "content": "拒绝"},
+                        "type": "danger",
+                        "value": {
+                            "action": "rejected",
+                            "user_id": user.user_id,
+                            "request_id": str(request_id or ""),
+                        },
+                    },
+                    {
+                        "tag": "button",
+                        "text": {"tag": "plain_text", "content": "打开管理页"},
+                        "type": "default",
+                        "url": admin_url,
+                    },
+                ],
+            },
+        ],
+    }
+
+
+def notify_access_request(user: AccessUser, note: str, request_id: int | None) -> bool:
+    return send_feishu_card(feishu_admin_open_id(), access_request_card(user, note, request_id))
 
 
 def notify_admin(text: str) -> bool:
