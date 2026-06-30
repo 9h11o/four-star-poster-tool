@@ -520,7 +520,8 @@ class PosterRequestHandler(BaseHTTPRequestHandler):
             if user is None:
                 self.send_json({"status": "login_required"}, status=401)
                 return
-            self.send_json({"status": get_user_status(user.user_id), "approved": is_approved(user)})
+            status = user.status or get_user_status(user.user_id)
+            self.send_json({"status": status, "approved": status == "approved" or is_approved(user)})
             return
         if parsed.path == "/admin/requests":
             self.send_admin_page(parsed)
@@ -661,7 +662,7 @@ class PosterRequestHandler(BaseHTTPRequestHandler):
         return None
 
     def send_access_page(self, user: AccessUser, message: str = "") -> None:
-        status = get_user_status(user.user_id)
+        status = user.status or get_user_status(user.user_id)
         status_text = {
             "pending": "申请审核中",
             "rejected": "申请未通过",

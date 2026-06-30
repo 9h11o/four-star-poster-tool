@@ -2,3 +2,4 @@ numpy
 openpyxl
 pillow
 psycopg[binary]
+psycopg_pool

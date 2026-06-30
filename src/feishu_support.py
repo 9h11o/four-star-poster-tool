@@ -20,6 +20,7 @@ DB_PATH = Path(os.getenv("POSTER_DB_PATH", DATA_DIR / "poster_tool.sqlite"))
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 SESSION_COOKIE = "poster_session"
 DB_READY = False
+DB_POOL: Any | None = None
 
 
 @dataclass
@@ -28,6 +29,7 @@ class AccessUser:
     name: str
     open_id: str = ""
     avatar_url: str = ""
+    status: str = ""
 
 
 def env_bool(name: str, default: bool = False) -> bool:
@@ -85,21 +87,43 @@ class DbCursor:
 
 
 class DbConnection:
-    def __init__(self, conn: Any, postgres: bool = False) -> None:
+    def __init__(self, conn: Any = None, postgres: bool = False, context: Any = None) -> None:
         self.conn = conn
         self.postgres = postgres
+        self.context = context
 
     def __enter__(self):
-        self.conn.__enter__()
+        if self.context is not None:
+            self.conn = self.context.__enter__()
+        else:
+            self.conn.__enter__()
         return self
 
     def __exit__(self, exc_type, exc, tb):
+        if self.context is not None:
+            return self.context.__exit__(exc_type, exc, tb)
         return self.conn.__exit__(exc_type, exc, tb)
 
     def execute(self, sql: str, params: tuple = ()) -> DbCursor:
         if self.postgres:
             sql = sql.replace("?", "%s")
         return DbCursor(self.conn.execute(sql, params))
+
+
+def postgres_pool():
+    global DB_POOL
+    if DB_POOL is None:
+        from psycopg.rows import dict_row
+        from psycopg_pool import ConnectionPool
+
+        DB_POOL = ConnectionPool(
+            conninfo=DATABASE_URL,
+            min_size=1,
+            max_size=4,
+            kwargs={"row_factory": dict_row},
+            open=True,
+        )
+    return DB_POOL
 
 
 def init_db() -> None:
@@ -209,10 +233,7 @@ def init_db() -> None:
 def db() -> DbConnection:
     init_db()
     if use_postgres():
-        from psycopg import connect
-        from psycopg.rows import dict_row
-
-        return DbConnection(connect(DATABASE_URL, row_factory=dict_row), postgres=True)
+        return DbConnection(postgres=True, context=postgres_pool().connection())
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return DbConnection(conn)
@@ -291,6 +312,7 @@ def user_from_session(headers: Any) -> AccessUser | None:
         open_id=row["open_id"] or "",
         name=row["name"],
         avatar_url=row["avatar_url"] or "",
+        status=row["status"] or "",
     )
 
 
@@ -317,7 +339,7 @@ def dev_user() -> AccessUser:
     name = os.getenv("DEV_FEISHU_USER_NAME", "本地测试用户")
     user_id = os.getenv("DEV_FEISHU_USER_ID", "dev_user")
     open_id = os.getenv("DEV_FEISHU_OPEN_ID", user_id)
-    user = AccessUser(user_id=user_id, open_id=open_id, name=name)
+    user = AccessUser(user_id=user_id, open_id=open_id, name=name, status=os.getenv("DEV_ACCESS_STATUS", "approved"))
     ensure_user(user, default_status=os.getenv("DEV_ACCESS_STATUS", "approved"))
     return user
 
@@ -334,6 +356,8 @@ def is_approved(user: AccessUser) -> bool:
     approved_ids = env_csv("FEISHU_APPROVED_OPEN_IDS")
     if user.user_id in approved_ids or user.open_id in approved_ids:
         return True
+    if user.status:
+        return user.status == "approved"
     return get_user_status(user.user_id) == "approved"
 
 
@@ -403,6 +427,7 @@ def get_user(user_id: str) -> AccessUser | None:
         open_id=row["open_id"] or "",
         name=row["name"],
         avatar_url=row["avatar_url"] or "",
+        status=row["status"] or "",
     )
 
 
@@ -518,6 +543,7 @@ def exchange_code_for_user(code: str) -> AccessUser:
         avatar_url=user_info.get("avatar_url", ""),
     )
     ensure_user(user)
+    user.status = get_user_status(user.user_id)
     return user
 
 
