@@ -131,6 +131,7 @@ def session_cookie(token: str) -> str:
     jar[SESSION_COOKIE]["path"] = "/"
     jar[SESSION_COOKIE]["httponly"] = True
     jar[SESSION_COOKIE]["samesite"] = "Lax"
+    jar[SESSION_COOKIE]["max-age"] = 60 * 60 * 24 * 30
     if app_base_url().startswith("https://"):
         jar[SESSION_COOKIE]["secure"] = True
     return jar.output(header="").strip()
@@ -157,7 +158,7 @@ def mark_entry_pass(user_id: str) -> None:
         )
 
 
-def has_recent_entry_pass(user_id: str, ttl_seconds: int = 600) -> bool:
+def has_recent_entry_pass(user_id: str, ttl_seconds: int = 60 * 60 * 24 * 30) -> bool:
     with db() as conn:
         row = conn.execute("select created_at from entry_passes where user_id = ?", (user_id,)).fetchone()
     if not row:

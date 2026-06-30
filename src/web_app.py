@@ -279,8 +279,7 @@ INDEX_HTML = """<!doctype html>
         <input id="output_filename" name="output_filename" value="李甲_四星讲师.png" autocomplete="off">
 
         <div class="actions">
-          <button id="downloadActionBtn" type="submit">下载海报</button>
-          <a id="downloadBtn" class="download" href="#" download aria-hidden="true"></a>
+          <a id="downloadBtn" class="download" href="#" download>下载海报</a>
         </div>
         <div id="status" class="status"></div>
       </form>
@@ -357,7 +356,7 @@ INDEX_HTML = """<!doctype html>
       controller = new AbortController();
       const data = new FormData(form);
       data.append('intent', intent);
-      setStatus(intent === 'export' ? '导出中...' : '生成中...');
+      setStatus('生成中...');
       try {
         const res = await fetch('/api/render', {
           method: 'POST',
@@ -371,11 +370,8 @@ INDEX_HTML = """<!doctype html>
         placeholder.style.display = 'none';
         downloadBtn.href = payload.download_url;
         downloadBtn.setAttribute('download', payload.filename);
-        setStatus(intent === 'export' ? '已下载，已通知管理员' : '已生成预览');
-        if (intent === 'export') {
-          downloadBtn.click();
-          showDownloadToast();
-        }
+        downloadBtn.style.display = 'inline-block';
+        setStatus('已生成预览');
       } catch (err) {
         if (err.name === 'AbortError') return;
         setStatus(err.message);
@@ -389,7 +385,21 @@ INDEX_HTML = """<!doctype html>
 
     form.addEventListener('submit', (event) => {
       event.preventDefault();
-      generate('export');
+      generate('preview');
+    });
+
+    downloadBtn.addEventListener('click', () => {
+      if (!downloadBtn.href || downloadBtn.getAttribute('href') === '#') return;
+      showDownloadToast();
+      setStatus('已下载，已通知管理员');
+      fetch('/api/record-download', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          filename: downloadBtn.getAttribute('download') || '四星讲师海报.png',
+          file_url: new URL(downloadBtn.href, window.location.origin).pathname
+        })
+      }).catch(() => {});
     });
 
     batchForm.addEventListener('submit', async (event) => {
@@ -450,10 +460,10 @@ class PosterRequestHandler(BaseHTTPRequestHandler):
             user = self.current_user(parsed)
             if user is None:
                 return
-            if require_feishu_login() and not has_recent_entry_pass(user.user_id):
-                self.send_entry_required_page()
-                return
             if not is_approved(user):
+                if require_feishu_login() and not has_recent_entry_pass(user.user_id):
+                    self.send_entry_required_page()
+                    return
                 self.send_access_page(user)
                 return
             self.send_bytes(INDEX_HTML.encode("utf-8"), "text/html; charset=utf-8")
@@ -501,6 +511,8 @@ class PosterRequestHandler(BaseHTTPRequestHandler):
                 payload = self.render_from_form(user)
             elif parsed.path == "/api/batch":
                 payload = self.batch_from_form(user)
+            elif parsed.path == "/api/record-download":
+                payload = self.record_download(user)
             else:
                 self.send_error(404)
                 return
@@ -582,7 +594,8 @@ class PosterRequestHandler(BaseHTTPRequestHandler):
                 )
                 return None
             token = create_session(user.user_id)
-            self.send_redirect("/", {"Set-Cookie": session_cookie(token)})
+            mark_entry_pass(user.user_id)
+            self.send_redirect("/feishu/start", {"Set-Cookie": session_cookie(token)})
             return None
 
         user = user_from_session(self.headers)
@@ -765,6 +778,15 @@ class PosterRequestHandler(BaseHTTPRequestHandler):
             "download_url": url,
             "filename": output_filename,
         }
+
+    def record_download(self, user: AccessUser) -> dict:
+        payload = self.parse_json_body()
+        filename = str(payload.get("filename") or "四星讲师海报.png")
+        file_url = str(payload.get("file_url") or "")
+        if not file_url.startswith("/outputs/web/"):
+            raise ValueError("下载链接无效。")
+        record_export(user, "single", filename, file_url)
+        return {"ok": True}
 
     def batch_from_form(self, user: AccessUser) -> dict:
         form = self.parse_form()
