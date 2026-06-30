@@ -548,10 +548,23 @@ class PosterRequestHandler(BaseHTTPRequestHandler):
             payload.get("event", {}).get("action", {}),
             payload.get("action", {}).get("value", {}),
             payload.get("event", {}).get("action", {}).get("value", {}),
+            payload.get("event", {}).get("action", {}).get("option", {}),
         ]
         for candidate in candidates:
+            if isinstance(candidate, str):
+                try:
+                    candidate = json.loads(candidate)
+                except json.JSONDecodeError:
+                    continue
             if isinstance(candidate, dict) and "value" in candidate and isinstance(candidate["value"], dict):
                 return candidate["value"]
+            if isinstance(candidate, dict) and "value" in candidate and isinstance(candidate["value"], str):
+                try:
+                    value = json.loads(candidate["value"])
+                except json.JSONDecodeError:
+                    value = {}
+                if isinstance(value, dict):
+                    return value
             if isinstance(candidate, dict) and "action" in candidate and "user_id" in candidate:
                 return candidate
         return {}

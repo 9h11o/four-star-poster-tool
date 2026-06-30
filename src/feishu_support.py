@@ -330,7 +330,7 @@ def record_export(user: AccessUser, kind: str, filename: str, file_url: str, ite
             """,
             (user.user_id, kind, filename, file_url, item_count, now_ts()),
         )
-    label = "批量导出" if kind == "batch" else "导出图片"
+    label = "批量导出" if kind == "batch" else "下载海报"
     notify_admin(
         f"{label}：{user.name} 已导出 {item_count} 个文件。\n"
         f"文件：{filename}\n"

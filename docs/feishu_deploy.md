@@ -6,7 +6,7 @@
 - 用户第一次进入时会识别飞书身份。
 - 未授权用户只能提交使用申请，不能进入海报工具。
 - 管理员可以在管理页同意或拒绝申请。
-- 用户点击“导出图片”或“批量导出”时，会记录导出日志，并给管理员发送飞书通知。
+- 用户点击“下载海报”或“批量导出”时，会记录导出日志，并给管理员发送飞书通知。
 - 权限申请会发送飞书消息卡片，管理员可以直接在卡片里点“同意 / 拒绝”。
 - 飞书卡片按钮需要配置卡片回调地址。
 
@@ -90,7 +90,7 @@ web: python src/web_app.py --host 0.0.0.0
 
 ## 卡片回调配置
 
-如果要在飞书消息卡片里直接点击“同意 / 拒绝”，需要在飞书开放平台配置回调地址：
+用户提交权限申请后，后端会主动用机器人给 `FEISHU_ADMIN_OPEN_ID` 发送一张飞书消息卡片。你在卡片里点“同意 / 拒绝”时，飞书会把按钮点击结果回调到下面这个地址：
 
 ```text
 https://你的云端域名/feishu/card/callback
@@ -108,4 +108,46 @@ https://four-star-poster-tool.onrender.com/feishu/card/callback
 事件与回调 / 回调配置 / 卡片回调
 ```
 
+这里不需要添加“用户导出图片”事件。用户下载海报的通知是后端主动给你发机器人消息，不依赖飞书事件订阅。
+
 如果飞书要求验证请求地址，保存时它会向这个地址发送验证请求，后端会自动返回 `challenge`。
+
+## 开放平台最终填写项
+
+### 网页应用
+
+桌面端主页：
+
+```text
+https://four-star-poster-tool.onrender.com/feishu/entry
+```
+
+移动端如果必填，也填同一个：
+
+```text
+https://four-star-poster-tool.onrender.com/feishu/entry
+```
+
+重定向 URL / OAuth Redirect URL：
+
+```text
+https://four-star-poster-tool.onrender.com/feishu/start
+```
+
+### 机器人菜单
+
+菜单按钮选择“跳转至指定链接”，桌面端和移动端都填：
+
+```text
+https://four-star-poster-tool.onrender.com/feishu/entry
+```
+
+### 回调配置
+
+卡片回调 / 消息卡片请求网址：
+
+```text
+https://four-star-poster-tool.onrender.com/feishu/card/callback
+```
+
+事件配置如果没有其他用途，可以不订阅事件。
