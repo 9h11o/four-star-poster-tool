@@ -606,7 +606,6 @@ class PosterRequestHandler(BaseHTTPRequestHandler):
 
     def send_entry_required_page(self) -> None:
         body = f"""
-        <p>为了保护工具使用权限，请从飞书机器人菜单进入。</p>
         <p class="muted">如果你刚刚从飞书进入，可以重新点击一次机器人菜单。</p>
         <a class="button" href="/feishu/entry">重新进入</a>
         """
