@@ -31,6 +31,7 @@ from feishu_support import (
     is_approved,
     mark_entry_pass,
     notify_admin,
+    notify_access_result,
     pending_requests,
     record_export,
     require_feishu_login,
@@ -514,6 +515,13 @@ class PosterRequestHandler(BaseHTTPRequestHandler):
                 return
             self.send_me_page(user)
             return
+        if parsed.path == "/access/status":
+            user = self.current_user(parsed, redirect_to_login=False)
+            if user is None:
+                self.send_json({"status": "login_required"}, status=401)
+                return
+            self.send_json({"status": get_user_status(user.user_id), "approved": is_approved(user)})
+            return
         if parsed.path == "/admin/requests":
             self.send_admin_page(parsed)
             return
@@ -537,7 +545,7 @@ class PosterRequestHandler(BaseHTTPRequestHandler):
                     return
                 form = self.parse_form()
                 create_access_request(user, self.form_value(form, "note", ""))
-                self.send_access_page(user, "申请已提交，我会在飞书里收到提醒。")
+                self.send_access_page(user, "申请已提交，我会在飞书里收到提醒。此页面会在通过后自动进入工具。")
                 return
 
             user = self.current_user(parsed, redirect_to_login=False)
@@ -577,6 +585,7 @@ class PosterRequestHandler(BaseHTTPRequestHandler):
         set_user_status(user_id, action)
         user_name = get_user_name(user_id)
         action_text = "已同意" if action == "approved" else "已拒绝"
+        notify_access_result(user_id, action)
         notify_admin(f"权限审核：{user_name} {action_text}。")
         self.send_json(
             {
@@ -658,6 +667,34 @@ class PosterRequestHandler(BaseHTTPRequestHandler):
             "rejected": "申请未通过",
             "none": "尚未申请",
         }.get(status, status)
+        if status == "approved":
+            self.send_redirect("/feishu/start")
+            return
+        if status == "pending":
+            body = f"""
+        <p class="muted">当前用户：{html.escape(user.name)}</p>
+        <p>状态：{html.escape(status_text)}</p>
+        {f'<p class="ok">{html.escape(message)}</p>' if message else '<p class="ok">申请已提交，请等待审核。</p>'}
+        <p class="muted">通过后这个页面会自动进入工具，不需要关掉重开。</p>
+        <script>
+          async function checkAccess() {{
+            try {{
+              const res = await fetch('/access/status', {{cache: 'no-store'}});
+              const data = await res.json();
+              if (data.approved || data.status === 'approved') {{
+                window.location.replace('/feishu/start');
+              }} else if (data.status === 'rejected') {{
+                window.location.reload();
+              }}
+            }} catch (error) {{}}
+          }}
+          setInterval(checkAccess, 2500);
+          checkAccess();
+        </script>
+        """
+            self.send_bytes(self.basic_page("申请审核中", body).encode("utf-8"), "text/html; charset=utf-8")
+            return
+
         body = f"""
         <p class="muted">当前用户：{html.escape(user.name)}</p>
         <p>状态：{html.escape(status_text)}</p>
@@ -698,6 +735,7 @@ class PosterRequestHandler(BaseHTTPRequestHandler):
         user_id = query.get("user_id", [""])[0]
         if action in {"approved", "rejected"} and user_id:
             set_user_status(user_id, action)
+            notify_access_result(user_id, action)
             self.send_redirect(f"/admin/requests?admin_token={admin_token()}")
             return
 
@@ -752,6 +790,10 @@ class PosterRequestHandler(BaseHTTPRequestHandler):
         form = ParsedForm()
         content_type = self.headers.get("Content-Type", "")
         if not content_type.startswith("multipart/form-data"):
+            if content_type.startswith("application/x-www-form-urlencoded"):
+                for name, values in parse_qs(body.decode("utf-8", errors="replace")).items():
+                    for value in values:
+                        form.add(name, UploadedField(value.encode("utf-8")))
             return form
 
         raw_message = (

@@ -10,6 +10,7 @@ from http import cookies
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlencode
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 
@@ -341,6 +342,10 @@ def create_access_request(user: AccessUser, note: str = "") -> int | None:
     ts = now_ts()
     request_id = None
     with db() as conn:
+        conn.execute(
+            "update users set status = 'pending', updated_at = ? where user_id = ? and status != 'approved'",
+            (ts, user.user_id),
+        )
         existing = conn.execute(
             "select id from access_requests where user_id = ? and status = 'pending'",
             (user.user_id,),
@@ -386,6 +391,19 @@ def get_user_name(user_id: str) -> str:
     with db() as conn:
         row = conn.execute("select name from users where user_id = ?", (user_id,)).fetchone()
     return row["name"] if row else user_id
+
+
+def get_user(user_id: str) -> AccessUser | None:
+    with db() as conn:
+        row = conn.execute("select * from users where user_id = ?", (user_id,)).fetchone()
+    if not row:
+        return None
+    return AccessUser(
+        user_id=row["user_id"],
+        open_id=row["open_id"] or "",
+        name=row["name"],
+        avatar_url=row["avatar_url"] or "",
+    )
 
 
 def pending_requests() -> list[Any]:
@@ -520,20 +538,28 @@ def send_feishu_message(receive_id: str, text: str) -> bool:
     if not (feishu_app_id() and feishu_app_secret() and receive_id):
         print(f"[feishu notify skipped] {text}")
         return False
-    token = tenant_access_token()
-    if not token:
-        print(f"[feishu notify failed] tenant_access_token missing: {text}")
+    try:
+        token = tenant_access_token()
+        if not token:
+            print(f"[feishu notify failed] tenant_access_token missing: {text}")
+            return False
+    except (HTTPError, URLError, TimeoutError, OSError) as exc:
+        print(f"[feishu notify failed] token error: {exc} | {text}")
         return False
     payload = {
         "receive_id": receive_id,
         "msg_type": "text",
         "content": json.dumps({"text": text}, ensure_ascii=False),
     }
-    result = json_post(
-        "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id",
-        payload,
-        {"Authorization": f"Bearer {token}"},
-    )
+    try:
+        result = json_post(
+            "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id",
+            payload,
+            {"Authorization": f"Bearer {token}"},
+        )
+    except (HTTPError, URLError, TimeoutError, OSError) as exc:
+        print(f"[feishu notify failed] send error: {exc} | {text}")
+        return False
     ok = result.get("code") in (0, None)
     if not ok:
         print(f"[feishu notify failed] {result}")
@@ -544,20 +570,28 @@ def send_feishu_card(receive_id: str, card: dict) -> bool:
     if not (feishu_app_id() and feishu_app_secret() and receive_id):
         print(f"[feishu card skipped] {json.dumps(card, ensure_ascii=False)}")
         return False
-    token = tenant_access_token()
-    if not token:
-        print(f"[feishu card failed] tenant_access_token missing: {json.dumps(card, ensure_ascii=False)}")
+    try:
+        token = tenant_access_token()
+        if not token:
+            print(f"[feishu card failed] tenant_access_token missing: {json.dumps(card, ensure_ascii=False)}")
+            return False
+    except (HTTPError, URLError, TimeoutError, OSError) as exc:
+        print(f"[feishu card failed] token error: {exc} | {json.dumps(card, ensure_ascii=False)}")
         return False
     payload = {
         "receive_id": receive_id,
         "msg_type": "interactive",
         "content": json.dumps(card, ensure_ascii=False),
     }
-    result = json_post(
-        "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id",
-        payload,
-        {"Authorization": f"Bearer {token}"},
-    )
+    try:
+        result = json_post(
+            "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id",
+            payload,
+            {"Authorization": f"Bearer {token}"},
+        )
+    except (HTTPError, URLError, TimeoutError, OSError) as exc:
+        print(f"[feishu card failed] send error: {exc} | {json.dumps(card, ensure_ascii=False)}")
+        return False
     ok = result.get("code") in (0, None)
     if not ok:
         print(f"[feishu card failed] {result}")
@@ -622,3 +656,16 @@ def notify_access_request(user: AccessUser, note: str, request_id: int | None) -
 
 def notify_admin(text: str) -> bool:
     return send_feishu_message(feishu_admin_open_id(), text)
+
+
+def notify_access_result(user_id: str, status: str) -> bool:
+    user = get_user(user_id)
+    if not user:
+        return False
+    if status == "approved":
+        text = "你的四星讲师海报工具使用申请已通过，申请页面会自动进入工具，也可以从机器人菜单再次打开。"
+    elif status == "rejected":
+        text = "你的四星讲师海报工具使用申请未通过，如需使用请联系管理员。"
+    else:
+        return False
+    return send_feishu_message(user.open_id or user.user_id, text)
