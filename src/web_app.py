@@ -12,6 +12,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
+from PIL import Image
+
 from app import PROJECT_ROOT, clean_filename, load_config, read_rows, render_teacher_image, save_rendered_image, with_output_format
 from feishu_support import (
     AccessUser,
@@ -494,8 +496,9 @@ class PosterRequestHandler(BaseHTTPRequestHandler):
                 self.send_access_page(user, "申请已提交，我会在飞书里收到提醒。")
                 return
 
-            user = self.current_user(parsed)
+            user = self.current_user(parsed, redirect_to_login=False)
             if user is None:
+                self.send_json({"error": "登录状态已失效，请从飞书机器人入口重新打开。"}, status=401)
                 return
             if not is_approved(user):
                 self.send_json({"error": "你还没有使用权限，请先申请。"}, status=403)
@@ -559,7 +562,7 @@ class PosterRequestHandler(BaseHTTPRequestHandler):
                 return candidate
         return {}
 
-    def current_user(self, parsed) -> AccessUser | None:
+    def current_user(self, parsed, redirect_to_login: bool = True) -> AccessUser | None:
         query = parse_qs(parsed.query)
         if "code" in query:
             try:
@@ -581,6 +584,9 @@ class PosterRequestHandler(BaseHTTPRequestHandler):
 
         if not require_feishu_login():
             return dev_user()
+
+        if not redirect_to_login:
+            return None
 
         self.send_redirect(authorization_url())
         return None
@@ -720,6 +726,7 @@ class PosterRequestHandler(BaseHTTPRequestHandler):
             with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp:
                 temp.write(portrait_item.file.read())
                 temp_path = Path(temp.name)
+            self.resize_uploaded_image(temp_path)
             portrait_path = str(temp_path)
 
         name = self.form_value(form, "name", "讲师")
@@ -783,6 +790,7 @@ class PosterRequestHandler(BaseHTTPRequestHandler):
             with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_portrait:
                 temp_portrait.write(item.file.read())
                 portrait_path = Path(temp_portrait.name)
+            self.resize_uploaded_image(portrait_path)
             temp_paths.append(portrait_path)
             uploaded_portraits[Path(item.filename).name] = portrait_path
             uploaded_portraits[Path(item.filename).stem] = portrait_path
@@ -843,11 +851,22 @@ class PosterRequestHandler(BaseHTTPRequestHandler):
                 return assets_candidate
         return None
 
-    def form_value(self, form: cgi.FieldStorage, key: str, default: str = "") -> str:
+    def form_value(self, form: ParsedForm, key: str, default: str = "") -> str:
         if key not in form:
             return default
         value = form.getfirst(key, default)
         return str(value).strip()
+
+    def resize_uploaded_image(self, path: Path, max_side: int = 1800) -> None:
+        try:
+            image = Image.open(path)
+            image.thumbnail((max_side, max_side), Image.LANCZOS)
+            if path.suffix.lower() in {".jpg", ".jpeg"}:
+                image.convert("RGB").save(path, quality=92, optimize=True)
+            else:
+                image.save(path, optimize=True)
+        except Exception:
+            return
 
     def serve_output(self, path: str) -> None:
         filename = Path(unquote(path)).name
