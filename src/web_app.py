@@ -598,7 +598,7 @@ class PosterRequestHandler(BaseHTTPRequestHandler):
         {f'<p class="ok">{html.escape(message)}</p>' if message else ''}
         <form method="post" action="/access/request">
           <label for="note">申请说明</label>
-          <textarea id="note" name="note" placeholder="可以写你是谁、为什么需要使用这个工具"></textarea>
+          <textarea id="note" name="note"></textarea>
           <button type="submit">申请使用权限</button>
         </form>
         """
