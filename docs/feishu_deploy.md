@@ -42,10 +42,13 @@ FEISHU_REQUIRE_LOGIN=true
 可选：
 
 ```text
+DATABASE_URL=云数据库连接地址
 POSTER_DB_PATH=/app/data/poster_tool.sqlite
 HOST=0.0.0.0
 PORT=8765
 ```
+
+如果使用 Render 免费实例，强烈建议配置 `DATABASE_URL`。否则审批记录会保存在 Render 实例本地文件里，重新部署或实例重启后可能丢失，用户就会再次看到申请页面。
 
 本地测试时，如果没有配置飞书信息，程序会自动使用本地测试用户，并默认通过权限。
 

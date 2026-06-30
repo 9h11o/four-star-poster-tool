@@ -40,6 +40,7 @@ from feishu_support import (
 
 
 WEB_OUTPUT_DIR = PROJECT_ROOT / "outputs" / "web"
+UPLOAD_CACHE_DIR = PROJECT_ROOT / "outputs" / "upload_cache"
 DEFAULT_PORTRAIT = "assets/portraits/李甲_transparent.png"
 
 
@@ -280,7 +281,7 @@ INDEX_HTML = """<!doctype html>
 问界打深耕深圳站集训及多店全链路入店提升辅导
 比亚迪王朝云贵川战区新媒体直播获客专项辅导</textarea>
 
-        <label for="bio">底部介绍</label>
+        <label for="bio">底部介绍（海报内文本框支持2-6行文案，服务过的品牌必须另起一行）</label>
         <textarea id="bio" name="bio">实战派辅导老师，14年汽车行业经验，6年新媒体经验，擅长新媒体全链路SOP集训/入店辅导，能快速切入门店痛点，用大白话讲专业方法，帮助学员拿到更有效的本地线索和成交闭环。</textarea>
 
         <label for="portrait">人像（无背景png人像）</label>
@@ -341,6 +342,7 @@ INDEX_HTML = """<!doctype html>
     let controller = null;
     let toastTimer = null;
     let toastFadeTimer = null;
+    let portraitToken = '';
 
     function setStatus(text) {
       statusEl.textContent = text;
@@ -362,10 +364,28 @@ INDEX_HTML = """<!doctype html>
       }, 3000);
     }
 
-    async function generate(intent = 'preview') {
+    function buildRenderData(includePortrait = false) {
+      const data = new FormData();
+      data.append('name', document.getElementById('name').value);
+      data.append('format', document.getElementById('format').value);
+      data.append('project_experience', document.getElementById('project_experience').value);
+      data.append('bio', document.getElementById('bio').value);
+      data.append('output_filename', document.getElementById('output_filename').value);
+      const portraitInput = document.getElementById('portrait');
+      if (includePortrait && portraitInput.files.length) {
+        data.append('portrait', portraitInput.files[0]);
+      } else if (portraitToken) {
+        data.append('portrait_token', portraitToken);
+      }
+      return data;
+    }
+
+    async function generate(intent = 'preview', includePortrait = false) {
       if (controller) controller.abort();
       controller = new AbortController();
-      const data = new FormData(form);
+      const portraitInput = document.getElementById('portrait');
+      const shouldUploadPortrait = includePortrait || (portraitInput.files.length && !portraitToken);
+      const data = buildRenderData(shouldUploadPortrait);
       data.append('intent', intent);
       setStatus('生成中...');
       try {
@@ -376,6 +396,7 @@ INDEX_HTML = """<!doctype html>
         });
         const payload = await res.json();
         if (!res.ok) throw new Error(payload.error || '生成失败');
+        if (payload.portrait_token) portraitToken = payload.portrait_token;
         preview.src = payload.preview_url + '?t=' + Date.now();
         preview.style.display = 'block';
         placeholder.style.display = 'none';
@@ -391,12 +412,12 @@ INDEX_HTML = """<!doctype html>
 
     function scheduleGenerate() {
       clearTimeout(timer);
-      timer = setTimeout(generate, 1200);
+      timer = setTimeout(() => generate('preview', false), 450);
     }
 
     form.addEventListener('submit', (event) => {
       event.preventDefault();
-      generate('preview');
+      generate('preview', false);
     });
 
     downloadBtn.addEventListener('click', () => {
@@ -439,7 +460,8 @@ INDEX_HTML = """<!doctype html>
     ['input', 'change'].forEach((eventName) => {
       form.addEventListener(eventName, (event) => {
         if (event.target.id === 'portrait') {
-          generate('preview');
+          portraitToken = '';
+          generate('preview', true);
         } else if (event.target.closest('#batchForm')) {
           return;
         } else {
@@ -750,8 +772,13 @@ class PosterRequestHandler(BaseHTTPRequestHandler):
             raise ValueError("Unsupported output format.")
 
         portrait_path = DEFAULT_PORTRAIT
+        portrait_token = self.form_value(form, "portrait_token", "")
+        if portrait_token:
+            portrait_path = str(self.cached_portrait_path(portrait_token))
+
         portrait_item = form["portrait"] if "portrait" in form else None
         temp_path = None
+        new_portrait_token = ""
         if portrait_item is not None and getattr(portrait_item, "filename", ""):
             suffix = Path(portrait_item.filename).suffix or ".png"
             if suffix.lower() != ".png":
@@ -761,7 +788,12 @@ class PosterRequestHandler(BaseHTTPRequestHandler):
                 temp_path = Path(temp.name)
             self.resize_uploaded_image(temp_path)
             self.ensure_transparent_png(temp_path)
-            portrait_path = str(temp_path)
+            new_portrait_token = uuid.uuid4().hex
+            cached_path = UPLOAD_CACHE_DIR / f"{new_portrait_token}.png"
+            UPLOAD_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            temp_path.replace(cached_path)
+            temp_path = None
+            portrait_path = str(cached_path)
 
         name = self.form_value(form, "name", "讲师")
         output_filename = self.form_value(form, "output_filename", f"{name}_四星讲师.{output_format}")
@@ -792,6 +824,7 @@ class PosterRequestHandler(BaseHTTPRequestHandler):
             "preview_url": f"/outputs/web/{preview_path.name}",
             "download_url": url,
             "filename": output_filename,
+            "portrait_token": new_portrait_token or portrait_token,
         }
 
     def record_download(self, user: AccessUser) -> dict:
@@ -905,6 +938,14 @@ class PosterRequestHandler(BaseHTTPRequestHandler):
         value = form.getfirst(key, default)
         return str(value).strip()
 
+    def cached_portrait_path(self, token: str) -> Path:
+        if not token or any(ch not in "0123456789abcdef" for ch in token.lower()):
+            raise ValueError("人像缓存已失效，请重新上传无背景 PNG 人像。")
+        path = UPLOAD_CACHE_DIR / f"{token}.png"
+        if not path.exists():
+            raise ValueError("人像缓存已失效，请重新上传无背景 PNG 人像。")
+        return path
+
     def ensure_transparent_png(self, path: Path) -> None:
         if path.suffix.lower() != ".png":
             raise ValueError("讲师照片请使用无背景 PNG 格式。")
@@ -920,13 +961,14 @@ class PosterRequestHandler(BaseHTTPRequestHandler):
         except Exception as exc:
             raise ValueError(f"无法读取讲师 PNG 人像：{exc}") from exc
 
-    def save_preview_image(self, image: Image.Image, output_path: Path, width: int = 420) -> Path:
+    def save_preview_image(self, image: Image.Image, output_path: Path, width: int = 750) -> Path:
         preview_path = output_path.with_name(f"{output_path.stem}_preview.jpg")
         preview = image.convert("RGB")
         ratio = width / preview.width
         size = (width, max(1, int(preview.height * ratio)))
-        preview = preview.resize(size, Image.Resampling.BILINEAR)
-        preview.save(preview_path, quality=76, optimize=True)
+        if size != preview.size:
+            preview = preview.resize(size, Image.Resampling.LANCZOS)
+        preview.save(preview_path, quality=88, optimize=True)
         return preview_path
 
     def resize_uploaded_image(self, path: Path, max_side: int = 1800) -> None:

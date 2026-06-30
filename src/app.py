@@ -4,6 +4,7 @@ import argparse
 import csv
 import json
 from collections import deque
+from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
@@ -46,14 +47,21 @@ def resolve_path(value: str) -> Path:
     return (PROJECT_ROOT / value).resolve()
 
 
+@lru_cache(maxsize=8)
 def load_config(template: str) -> dict:
     config_path = PROJECT_ROOT / "src" / "templates" / template / "config.json"
     with config_path.open("r", encoding="utf-8") as f:
         return json.load(f)
 
 
+@lru_cache(maxsize=32)
 def font(path: Path, size: int | float) -> ImageFont.FreeTypeFont:
     return ImageFont.truetype(str(path), size=round(size))
+
+
+@lru_cache(maxsize=16)
+def cached_rgba_image(path: Path) -> Image.Image:
+    return Image.open(path).convert("RGBA")
 
 
 def text_width(draw: ImageDraw.ImageDraw, text: str, ft: ImageFont.FreeTypeFont) -> int:
@@ -195,7 +203,7 @@ def texture_text(
     if text_bbox is None:
         return
 
-    texture = Image.open(texture_path).convert("RGBA")
+    texture = cached_rgba_image(texture_path)
     tiled = Image.new("RGBA", base.size, (0, 0, 0, 0))
     for tile_y in range(text_bbox[1], text_bbox[3], texture.height):
         for tile_x in range(text_bbox[0], text_bbox[2], texture.width):
@@ -502,7 +510,7 @@ def draw_bio_glow_bars(canvas: Image.Image, cfg: dict, left: int, right: int, bo
     glow_path = cfg["assets"].get("bio_box_glow_bar")
     if not glow_path:
         return
-    glow = Image.open(resolve_path(glow_path)).convert("RGBA")
+    glow = cached_rgba_image(resolve_path(glow_path)).copy()
     max_width = right - left
     if glow.width > max_width:
         scale = max_width / glow.width
@@ -517,7 +525,7 @@ def draw_bio_glow_bars(canvas: Image.Image, cfg: dict, left: int, right: int, bo
 
 def render_teacher_image(config: dict, row: dict) -> Image.Image:
     expected_size = (config["canvas"]["width"], config["canvas"]["height"])
-    base = Image.open(resolve_path(config["assets"]["base"])).convert("RGBA")
+    base = cached_rgba_image(resolve_path(config["assets"]["base"]))
     if base.size != expected_size:
         raise ValueError(f"Base template size {base.size} does not match configured canvas {expected_size}.")
 
@@ -527,7 +535,7 @@ def render_teacher_image(config: dict, row: dict) -> Image.Image:
 
     paste_portrait(canvas, resolve_path(row["portrait_path"]), config["portrait"])
 
-    mask = Image.open(resolve_path(config["assets"]["foreground_mask"])).convert("RGBA")
+    mask = cached_rgba_image(resolve_path(config["assets"]["foreground_mask"]))
     if mask.size != expected_size:
         raise ValueError(f"Foreground mask size {mask.size} does not match configured canvas {expected_size}.")
     canvas.alpha_composite(mask, (0, 0))
