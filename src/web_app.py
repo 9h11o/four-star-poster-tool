@@ -118,10 +118,20 @@ INDEX_HTML = """<!doctype html>
       min-width: 0;
     }
     h1 {
-      margin: 0 0 18px;
+      margin: 0 0 8px;
       font-size: 22px;
       font-weight: 700;
       letter-spacing: 0;
+    }
+    .tool-note {
+      margin: 0 0 18px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+    .support-name {
+      color: var(--gold);
+      font-weight: 700;
     }
     label {
       display: block;
@@ -249,6 +259,7 @@ INDEX_HTML = """<!doctype html>
   <div class="app">
     <aside>
       <h1>四星讲师海报</h1>
+      <p class="tool-note">工具仅限巨懂车内部同学使用，如遇到工具无法解决的情况 <span class="support-name">@洪心羽</span> 提供支持；</p>
       <form id="posterForm">
         <div class="row">
           <div>
@@ -273,7 +284,7 @@ INDEX_HTML = """<!doctype html>
         <textarea id="bio" name="bio">实战派辅导老师，14年汽车行业经验，6年新媒体经验，擅长新媒体全链路SOP集训/入店辅导，能快速切入门店痛点，用大白话讲专业方法，帮助学员拿到更有效的本地线索和成交闭环。</textarea>
 
         <label for="portrait">人像（无背景png人像）</label>
-        <input id="portrait" name="portrait" type="file" accept="image/png,image/jpeg,image/webp">
+        <input id="portrait" name="portrait" type="file" accept="image/png">
 
         <label for="output_filename">文件名</label>
         <input id="output_filename" name="output_filename" value="李甲_四星讲师.png" autocomplete="off">
@@ -289,11 +300,11 @@ INDEX_HTML = """<!doctype html>
       <form id="batchForm">
         <label for="batch_table">讲师表格</label>
         <input id="batch_table" name="batch_table" type="file" accept=".xlsx,.xlsm,.csv">
-        <div class="hint">表格字段：讲师姓名、项目经历、底部介绍（服务过的品牌与介绍写在一起，自行换行区分即可）、人像照片。人像照片可写路径/文件名，也可以直接把图片插入对应行。</div>
+        <div class="hint">表格字段：讲师姓名、项目经历、底部介绍（服务过的品牌与介绍写在一起，自行换行区分即可）、人像照片。讲师照片为无背景 PNG 格式。</div>
 
         <label for="batch_portraits">人像图片</label>
-        <input id="batch_portraits" name="batch_portraits" type="file" accept="image/png,image/jpeg,image/webp" multiple>
-        <div class="hint">表格里“人像照片”可以写图片路径/文件名或插入图片；也可以在这里单独上传多张人像，程序会按文件名匹配。两种方式都支持。</div>
+        <input id="batch_portraits" name="batch_portraits" type="file" accept="image/png" multiple>
+        <div class="hint">讲师照片为无背景 PNG 格式。可在这里单独上传多张人像，程序会按文件名匹配。</div>
 
         <label for="batch_format">导出格式</label>
         <select id="batch_format" name="format">
@@ -380,7 +391,7 @@ INDEX_HTML = """<!doctype html>
 
     function scheduleGenerate() {
       clearTimeout(timer);
-      timer = setTimeout(generate, 650);
+      timer = setTimeout(generate, 1200);
     }
 
     form.addEventListener('submit', (event) => {
@@ -743,10 +754,13 @@ class PosterRequestHandler(BaseHTTPRequestHandler):
         temp_path = None
         if portrait_item is not None and getattr(portrait_item, "filename", ""):
             suffix = Path(portrait_item.filename).suffix or ".png"
+            if suffix.lower() != ".png":
+                raise ValueError("请上传无背景 PNG 人像。")
             with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp:
                 temp.write(portrait_item.file.read())
                 temp_path = Path(temp.name)
             self.resize_uploaded_image(temp_path)
+            self.ensure_transparent_png(temp_path)
             portrait_path = str(temp_path)
 
         name = self.form_value(form, "name", "讲师")
@@ -766,6 +780,7 @@ class PosterRequestHandler(BaseHTTPRequestHandler):
         config = load_config("four_star")
         image = render_teacher_image(config, row)
         save_rendered_image(image, output_path)
+        preview_path = self.save_preview_image(image, output_path)
 
         if temp_path is not None:
             temp_path.unlink(missing_ok=True)
@@ -774,7 +789,7 @@ class PosterRequestHandler(BaseHTTPRequestHandler):
         if intent == "export":
             record_export(user, "single", output_filename, url)
         return {
-            "preview_url": url,
+            "preview_url": f"/outputs/web/{preview_path.name}",
             "download_url": url,
             "filename": output_filename,
         }
@@ -816,10 +831,13 @@ class PosterRequestHandler(BaseHTTPRequestHandler):
             if not getattr(item, "filename", ""):
                 continue
             suffix = Path(item.filename).suffix or ".png"
+            if suffix.lower() != ".png":
+                raise ValueError("批量上传的人像图片请使用无背景 PNG 格式。")
             with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_portrait:
                 temp_portrait.write(item.file.read())
                 portrait_path = Path(temp_portrait.name)
             self.resize_uploaded_image(portrait_path)
+            self.ensure_transparent_png(portrait_path)
             temp_paths.append(portrait_path)
             uploaded_portraits[Path(item.filename).name] = portrait_path
             uploaded_portraits[Path(item.filename).stem] = portrait_path
@@ -843,6 +861,7 @@ class PosterRequestHandler(BaseHTTPRequestHandler):
             portrait_value = str(row.get("portrait_path", "")).strip()
             matched_portrait = self.match_portrait(portrait_value, uploaded_portraits)
             row["portrait_path"] = str(matched_portrait or (PROJECT_ROOT / DEFAULT_PORTRAIT))
+            self.ensure_transparent_png(Path(row["portrait_path"]))
             filename = row.get("output_filename") or f"{name}_四星讲师.{output_format}"
             filename = with_output_format(clean_filename(filename), output_format)
             row["output_filename"] = filename
@@ -885,6 +904,30 @@ class PosterRequestHandler(BaseHTTPRequestHandler):
             return default
         value = form.getfirst(key, default)
         return str(value).strip()
+
+    def ensure_transparent_png(self, path: Path) -> None:
+        if path.suffix.lower() != ".png":
+            raise ValueError("讲师照片请使用无背景 PNG 格式。")
+        try:
+            with Image.open(path) as image:
+                if image.mode not in {"RGBA", "LA"} and "transparency" not in image.info:
+                    raise ValueError("讲师照片请使用无背景 PNG 格式。")
+                alpha = image.convert("RGBA").getchannel("A")
+                if alpha.getextrema()[0] >= 250:
+                    raise ValueError("讲师照片请使用无背景 PNG 格式。")
+        except ValueError:
+            raise
+        except Exception as exc:
+            raise ValueError(f"无法读取讲师 PNG 人像：{exc}") from exc
+
+    def save_preview_image(self, image: Image.Image, output_path: Path, width: int = 420) -> Path:
+        preview_path = output_path.with_name(f"{output_path.stem}_preview.jpg")
+        preview = image.convert("RGB")
+        ratio = width / preview.width
+        size = (width, max(1, int(preview.height * ratio)))
+        preview = preview.resize(size, Image.Resampling.BILINEAR)
+        preview.save(preview_path, quality=76, optimize=True)
+        return preview_path
 
     def resize_uploaded_image(self, path: Path, max_side: int = 1800) -> None:
         try:
