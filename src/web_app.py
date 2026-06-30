@@ -5,6 +5,7 @@ from email.policy import default as email_policy
 import html
 import io
 import json
+import shutil
 import tempfile
 import uuid
 import zipfile
@@ -291,6 +292,7 @@ INDEX_HTML = """<!doctype html>
         <input id="output_filename" name="output_filename" value="李甲_四星讲师.png" autocomplete="off">
 
         <div class="actions">
+          <button id="previewBtn" type="submit">生成预览</button>
           <a id="downloadBtn" class="download" href="#" download>下载海报</a>
         </div>
         <div id="status" class="status"></div>
@@ -338,11 +340,11 @@ INDEX_HTML = """<!doctype html>
     const batchStatusEl = document.getElementById('batchStatus');
     const batchDownloadBtn = document.getElementById('batchDownloadBtn');
     const downloadToast = document.getElementById('downloadToast');
-    let timer = null;
     let controller = null;
     let toastTimer = null;
     let toastFadeTimer = null;
     let portraitToken = '';
+    let hasPreview = false;
 
     function setStatus(text) {
       statusEl.textContent = text;
@@ -403,6 +405,7 @@ INDEX_HTML = """<!doctype html>
         downloadBtn.href = payload.download_url;
         downloadBtn.setAttribute('download', payload.filename);
         downloadBtn.style.display = 'inline-block';
+        hasPreview = true;
         setStatus('已生成预览');
       } catch (err) {
         if (err.name === 'AbortError') return;
@@ -410,9 +413,11 @@ INDEX_HTML = """<!doctype html>
       }
     }
 
-    function scheduleGenerate() {
-      clearTimeout(timer);
-      timer = setTimeout(() => generate('preview', false), 450);
+    function markPreviewDirty() {
+      hasPreview = false;
+      downloadBtn.href = '#';
+      downloadBtn.style.display = 'none';
+      setStatus('内容已修改，请点击生成预览');
     }
 
     form.addEventListener('submit', (event) => {
@@ -420,8 +425,12 @@ INDEX_HTML = """<!doctype html>
       generate('preview', false);
     });
 
-    downloadBtn.addEventListener('click', () => {
-      if (!downloadBtn.href || downloadBtn.getAttribute('href') === '#') return;
+    downloadBtn.addEventListener('click', (event) => {
+      if (!hasPreview || !downloadBtn.href || downloadBtn.getAttribute('href') === '#') {
+        event.preventDefault();
+        setStatus('请先点击生成预览');
+        return;
+      }
       showDownloadToast();
       setStatus('已下载，已通知管理员');
       fetch('/api/record-download', {
@@ -461,16 +470,14 @@ INDEX_HTML = """<!doctype html>
       form.addEventListener(eventName, (event) => {
         if (event.target.id === 'portrait') {
           portraitToken = '';
-          generate('preview', true);
+          markPreviewDirty();
         } else if (event.target.closest('#batchForm')) {
           return;
         } else {
-          scheduleGenerate();
+          markPreviewDirty();
         }
       });
     });
-
-    generate('preview');
   </script>
 </body>
 </html>
@@ -791,7 +798,7 @@ class PosterRequestHandler(BaseHTTPRequestHandler):
             new_portrait_token = uuid.uuid4().hex
             cached_path = UPLOAD_CACHE_DIR / f"{new_portrait_token}.png"
             UPLOAD_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-            temp_path.replace(cached_path)
+            shutil.move(str(temp_path), str(cached_path))
             temp_path = None
             portrait_path = str(cached_path)
 

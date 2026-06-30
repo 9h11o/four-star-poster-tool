@@ -336,7 +336,7 @@ def is_approved(user: AccessUser) -> bool:
     return get_user_status(user.user_id) == "approved"
 
 
-def create_access_request(user: AccessUser, note: str = "") -> None:
+def create_access_request(user: AccessUser, note: str = "") -> int | None:
     ensure_user(user)
     ts = now_ts()
     request_id = None
@@ -364,11 +364,12 @@ def create_access_request(user: AccessUser, note: str = "") -> None:
             request_id = row["id"] if row else cursor.lastrowid
     sent = notify_access_request(user, note, request_id)
     if sent:
-        return
+        return request_id
     notify_admin(
         f"权限申请：{user.name} 申请使用四星讲师海报工具。\n"
         f"审核地址：{app_base_url()}/admin/requests?admin_token={quote(admin_token())}"
     )
+    return request_id
 
 
 def set_user_status(user_id: str, status: str) -> None:
@@ -387,7 +388,7 @@ def get_user_name(user_id: str) -> str:
     return row["name"] if row else user_id
 
 
-def pending_requests() -> list[sqlite3.Row]:
+def pending_requests() -> list[Any]:
     with db() as conn:
         return list(
             conn.execute(
@@ -404,6 +405,7 @@ def pending_requests() -> list[sqlite3.Row]:
                   users.status as user_status
                 from access_requests
                 join users on users.user_id = access_requests.user_id
+                where access_requests.status = 'pending'
                 union all
                 select
                   0 as id,
