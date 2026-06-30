@@ -34,6 +34,10 @@ def env_bool(name: str, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def env_csv(name: str) -> set[str]:
+    return {item.strip() for item in os.getenv(name, "").split(",") if item.strip()}
+
+
 def app_base_url() -> str:
     return os.getenv("APP_PUBLIC_BASE_URL", "http://127.0.0.1:8765").rstrip("/")
 
@@ -213,12 +217,17 @@ def dev_user() -> AccessUser:
 
 
 def get_user_status(user_id: str) -> str:
+    if user_id in env_csv("FEISHU_APPROVED_OPEN_IDS"):
+        return "approved"
     with db() as conn:
         row = conn.execute("select status from users where user_id = ?", (user_id,)).fetchone()
     return row["status"] if row else "none"
 
 
 def is_approved(user: AccessUser) -> bool:
+    approved_ids = env_csv("FEISHU_APPROVED_OPEN_IDS")
+    if user.user_id in approved_ids or user.open_id in approved_ids:
+        return True
     return get_user_status(user.user_id) == "approved"
 
 

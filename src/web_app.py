@@ -215,34 +215,28 @@ INDEX_HTML = """<!doctype html>
       color: var(--muted);
       font-size: 14px;
     }
-    .modal-backdrop {
+    .download-toast {
       position: fixed;
-      inset: 0;
+      left: 50%;
+      bottom: 28px;
       display: none;
-      place-items: center;
-      background: rgba(0, 0, 0, .62);
-      padding: 20px;
-      z-index: 10;
-    }
-    .modal {
-      width: min(420px, 100%);
+      max-width: calc(100vw - 40px);
       border: 1px solid var(--line-soft);
       border-radius: 8px;
       background: #1c1812;
-      padding: 24px;
-      box-shadow: 0 22px 70px rgba(0, 0, 0, .42);
+      color: var(--gold);
+      font-weight: 700;
+      padding: 14px 18px;
+      box-shadow: 0 18px 55px rgba(0, 0, 0, .38);
+      opacity: 0;
+      transform: translate(-50%, 8px);
+      transition: opacity .75s ease, transform .75s ease;
+      z-index: 10;
+      pointer-events: none;
     }
-    .modal h2 {
-      margin: 0 0 10px;
-      font-size: 22px;
-    }
-    .modal p {
-      margin: 0 0 20px;
-      color: var(--muted);
-      line-height: 1.6;
-    }
-    .modal button {
-      width: 100%;
+    .download-toast.is-visible {
+      opacity: 1;
+      transform: translate(-50%, 0);
     }
     @media (max-width: 860px) {
       .app { grid-template-columns: 1fr; }
@@ -285,8 +279,8 @@ INDEX_HTML = """<!doctype html>
         <input id="output_filename" name="output_filename" value="李甲_四星讲师.png" autocomplete="off">
 
         <div class="actions">
-          <button id="generateBtn" type="submit">导出图片</button>
-          <a id="downloadBtn" class="download" href="#" download>下载海报</a>
+          <button id="downloadActionBtn" type="submit">下载海报</button>
+          <a id="downloadBtn" class="download" href="#" download aria-hidden="true"></a>
         </div>
         <div id="status" class="status"></div>
       </form>
@@ -322,13 +316,7 @@ INDEX_HTML = """<!doctype html>
       </div>
     </main>
   </div>
-  <div id="successModal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="successTitle">
-    <div class="modal">
-      <h2 id="successTitle">导出成功</h2>
-      <p>海报已生成，使用记录已推送给管理员。</p>
-      <button id="successCloseBtn" type="button">给设计师＋鸡腿</button>
-    </div>
-  </div>
+  <div id="downloadToast" class="download-toast" role="status" aria-live="polite">下载成功！给设计师+鸡腿</div>
   <script>
     const form = document.getElementById('posterForm');
     const preview = document.getElementById('preview');
@@ -338,21 +326,30 @@ INDEX_HTML = """<!doctype html>
     const batchForm = document.getElementById('batchForm');
     const batchStatusEl = document.getElementById('batchStatus');
     const batchDownloadBtn = document.getElementById('batchDownloadBtn');
-    const successModal = document.getElementById('successModal');
-    const successCloseBtn = document.getElementById('successCloseBtn');
+    const downloadToast = document.getElementById('downloadToast');
     let timer = null;
     let controller = null;
+    let toastTimer = null;
+    let toastFadeTimer = null;
 
     function setStatus(text) {
       statusEl.textContent = text;
     }
 
-    function showSuccessModal() {
-      successModal.style.display = 'grid';
-    }
-
-    function hideSuccessModal() {
-      successModal.style.display = 'none';
+    function showDownloadToast() {
+      clearTimeout(toastTimer);
+      clearTimeout(toastFadeTimer);
+      downloadToast.style.display = 'block';
+      downloadToast.classList.remove('is-visible');
+      requestAnimationFrame(() => {
+        downloadToast.classList.add('is-visible');
+      });
+      toastTimer = setTimeout(() => {
+        downloadToast.classList.remove('is-visible');
+        toastFadeTimer = setTimeout(() => {
+          downloadToast.style.display = 'none';
+        }, 800);
+      }, 3000);
     }
 
     async function generate(intent = 'preview') {
@@ -374,9 +371,11 @@ INDEX_HTML = """<!doctype html>
         placeholder.style.display = 'none';
         downloadBtn.href = payload.download_url;
         downloadBtn.setAttribute('download', payload.filename);
-        downloadBtn.style.display = 'inline-block';
-        setStatus(intent === 'export' ? '已导出，已通知管理员' : '已生成预览');
-        if (intent === 'export') showSuccessModal();
+        setStatus(intent === 'export' ? '已下载，已通知管理员' : '已生成预览');
+        if (intent === 'export') {
+          downloadBtn.click();
+          showDownloadToast();
+        }
       } catch (err) {
         if (err.name === 'AbortError') return;
         setStatus(err.message);
@@ -391,11 +390,6 @@ INDEX_HTML = """<!doctype html>
     form.addEventListener('submit', (event) => {
       event.preventDefault();
       generate('export');
-    });
-
-    successCloseBtn.addEventListener('click', hideSuccessModal);
-    successModal.addEventListener('click', (event) => {
-      if (event.target === successModal) hideSuccessModal();
     });
 
     batchForm.addEventListener('submit', async (event) => {
