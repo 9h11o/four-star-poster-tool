@@ -276,10 +276,37 @@ def pending_requests() -> list[sqlite3.Row]:
         return list(
             conn.execute(
                 """
-                select access_requests.*, users.name, users.open_id, users.status as user_status
+                select
+                  access_requests.id,
+                  access_requests.user_id,
+                  access_requests.note,
+                  access_requests.status,
+                  access_requests.created_at,
+                  access_requests.updated_at,
+                  users.name,
+                  users.open_id,
+                  users.status as user_status
                 from access_requests
                 join users on users.user_id = access_requests.user_id
-                order by access_requests.created_at desc
+                union all
+                select
+                  0 as id,
+                  users.user_id,
+                  '' as note,
+                  users.status,
+                  users.created_at,
+                  users.updated_at,
+                  users.name,
+                  users.open_id,
+                  users.status as user_status
+                from users
+                where users.status = 'pending'
+                  and not exists (
+                    select 1 from access_requests
+                    where access_requests.user_id = users.user_id
+                      and access_requests.status = 'pending'
+                  )
+                order by updated_at desc
                 """
             ).fetchall()
         )
